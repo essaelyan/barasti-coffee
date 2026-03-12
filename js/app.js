@@ -91,7 +91,10 @@ function initLoader() {
   });
 
   return new Promise((resolve) => {
+    let resolved = false;
     function ready() {
+      if (resolved) return;
+      resolved = true;
       clearInterval(fakeTimer);
       videoDuration = video.duration || 1;
       loaderBar.style.width = '100%';
@@ -99,8 +102,12 @@ function initLoader() {
       drawVideoFrame();
       setTimeout(() => { hideLoader(); resolve(); }, 350);
     }
-    if (video.readyState >= 3) { ready(); }
-    else { video.addEventListener('canplaythrough', ready, { once: true }); }
+    if (video.readyState >= 2) { ready(); return; }
+    video.addEventListener('canplaythrough', ready, { once: true });
+    video.addEventListener('canplay',        ready, { once: true });
+    video.addEventListener('loadeddata',     ready, { once: true });
+    // Fallback: force-complete after 5 s on mobile where video won't preload
+    setTimeout(ready, 5000);
   });
 }
 
