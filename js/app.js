@@ -3,11 +3,11 @@
    ============================================= */
 
 // ── Config ─────────────────────────────────
-const IMAGE_SCALE = 0.85;
+const IMAGE_SCALE    = 0.85;
 const WHATSAPP_NUMBER = '96500000000'; // ← replace with real number
+const TOTAL_FRAMES   = 192;
 
 // ── Elements ───────────────────────────────
-const video      = document.getElementById('video');
 const canvas     = document.getElementById('canvas');
 const ctx        = canvas.getContext('2d');
 const canvasWrap = document.getElementById('canvas-wrap');
@@ -18,10 +18,10 @@ const loaderBar  = document.getElementById('loader-bar');
 const loaderPct  = document.getElementById('loader-percent');
 const header     = document.querySelector('.site-header');
 
-let videoDuration = 0;
-let isSeeking     = false;
-let targetTime    = 0;
-let rafPending    = false;
+// ── Frames ─────────────────────────────────
+const frames = new Array(TOTAL_FRAMES);
+let currentFrameIdx = 0;
+let rafPending = false;
 
 // ═══════════════════════════════════════════
 //  CANVAS
@@ -33,87 +33,62 @@ function resizeCanvas() {
   canvas.style.width  = window.innerWidth  + 'px';
   canvas.style.height = window.innerHeight + 'px';
   ctx.scale(dpr, dpr);
-  drawVideoFrame();
+  drawFrame(currentFrameIdx);
 }
 window.addEventListener('resize', resizeCanvas);
 
-function drawVideoFrame() {
-  if (video.readyState < 2) return;
+function drawFrame(idx) {
+  const img = frames[idx];
+  if (!img || !img.complete || !img.naturalWidth) return;
   const cw = window.innerWidth, ch = window.innerHeight;
-  const vw = video.videoWidth,  vh = video.videoHeight;
-  if (!vw || !vh) return;
-  const scale = Math.max(cw / vw, ch / vh) * IMAGE_SCALE;
-  const dw = vw * scale, dh = vh * scale;
+  const iw = img.naturalWidth,  ih = img.naturalHeight;
+  const scale = Math.max(cw / iw, ch / ih) * IMAGE_SCALE;
+  const dw = iw * scale, dh = ih * scale;
   const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, cw, ch);
-  ctx.drawImage(video, dx, dy, dw, dh);
+  ctx.drawImage(img, dx, dy, dw, dh);
 }
 
-function seekTo(time) {
-  targetTime = Math.max(0, Math.min(time, videoDuration));
-  if (!rafPending) { rafPending = true; requestAnimationFrame(doSeek); }
-}
-function doSeek() {
-  rafPending = false;
-  if (Math.abs(video.currentTime - targetTime) > 0.015 && !isSeeking) {
-    isSeeking = true;
-    video.currentTime = targetTime;
+function showFrame(progress) {
+  const idx = Math.min(TOTAL_FRAMES - 1, Math.max(0, Math.round(progress * (TOTAL_FRAMES - 1))));
+  currentFrameIdx = idx;
+  if (!rafPending) {
+    rafPending = true;
+    requestAnimationFrame(() => { rafPending = false; drawFrame(idx); });
   }
 }
-video.addEventListener('seeked', () => {
-  isSeeking = false;
-  drawVideoFrame();
-  if (Math.abs(video.currentTime - targetTime) > 0.033) seekTo(targetTime);
-});
 
 // ═══════════════════════════════════════════
-//  LOADER
+//  LOADER — preloads all frames
 // ═══════════════════════════════════════════
 function initLoader() {
-  // Animate bar to 30% quickly while video buffers
-  let fake = 0;
-  const fakeTimer = setInterval(() => {
-    fake = Math.min(fake + 3, 30);
-    const actual = getBufferPct();
-    const pct = Math.max(fake, actual);
-    loaderBar.style.width = pct + '%';
-    loaderPct.textContent = Math.round(pct) + '%';
-    if (pct >= 100) clearInterval(fakeTimer);
-  }, 50);
-
-  video.addEventListener('progress', () => {
-    const pct = getBufferPct();
-    if (pct > parseInt(loaderBar.style.width || '0')) {
-      loaderBar.style.width = pct + '%';
-      loaderPct.textContent = Math.round(pct) + '%';
-    }
-  });
-
   return new Promise((resolve) => {
-    let resolved = false;
-    function ready() {
-      if (resolved) return;
-      resolved = true;
-      clearInterval(fakeTimer);
-      videoDuration = video.duration || 1;
-      loaderBar.style.width = '100%';
-      loaderPct.textContent = '100%';
-      drawVideoFrame();
-      setTimeout(() => { hideLoader(); resolve(); }, 350);
-    }
-    if (video.readyState >= 2) { ready(); return; }
-    video.addEventListener('canplaythrough', ready, { once: true });
-    video.addEventListener('canplay',        ready, { once: true });
-    video.addEventListener('loadeddata',     ready, { once: true });
-    // Fallback: force-complete after 5 s on mobile where video won't preload
-    setTimeout(ready, 5000);
-  });
-}
+    let loaded = 0;
 
-function getBufferPct() {
-  if (!video.duration || !video.buffered.length) return 0;
-  return Math.round((video.buffered.end(video.buffered.length - 1) / video.duration) * 100);
+    function onLoad() {
+      loaded++;
+      const pct = Math.round((loaded / TOTAL_FRAMES) * 100);
+      loaderBar.style.width = pct + '%';
+      loaderPct.textContent = pct + '%';
+
+      if (loaded === 1) drawFrame(0); // show first frame ASAP
+
+      if (loaded === TOTAL_FRAMES) {
+        loaderBar.style.width = '100%';
+        loaderPct.textContent = '100%';
+        setTimeout(() => { hideLoader(); resolve(); }, 350);
+      }
+    }
+
+    for (let i = 0; i < TOTAL_FRAMES; i++) {
+      const img = new Image();
+      img.onload  = onLoad;
+      img.onerror = onLoad; // count errors too so loader always completes
+      img.src = `frames/frame-${String(i + 1).padStart(3, '0')}.jpg`;
+      frames[i] = img;
+    }
+  });
 }
 
 function hideLoader() {
@@ -182,14 +157,13 @@ function initHeroVideo() {
       heroSection.style.pointerEvents = p > 0.15 ? 'none' : 'auto';
 
       // Canvas circle-wipe: 0 → 80% of viewport
-      const wipe   = Math.min(1, Math.max(0, (p - 0.02) / 0.10));
+      const wipe = Math.min(1, Math.max(0, (p - 0.02) / 0.10));
       canvasWrap.style.clipPath = `circle(${wipe * 80}% at 50% 50%)`;
 
-      // Video seeks through full duration over hero scroll
-      if (videoDuration) seekTo(p * videoDuration);
+      // Show the correct frame based on scroll progress
+      showFrame(p);
     },
     onLeave: () => {
-      // Canvas fades out when scrolling into store section
       gsap.to(canvasWrap, { opacity: 0, duration: 0.5, ease: 'power2.inOut' });
     },
     onEnterBack: () => {
@@ -220,7 +194,6 @@ function initRevealSections() {
 function initCardAnimations() {
   const cards = document.querySelectorAll('.product-card');
 
-  // Split into rows of 3 and stagger each row
   const rows = [];
   cards.forEach((card, i) => {
     const row = Math.floor(i / 3);
@@ -254,7 +227,7 @@ const cartToggle   = document.getElementById('cart-toggle');
 const cartClose    = document.getElementById('cart-close');
 const cartWhatsApp = document.getElementById('cart-whatsapp');
 
-let cart = []; // [{ name, price, qty }]
+let cart = [];
 
 function openCart() {
   cartSidebar.classList.add('open');
@@ -317,7 +290,6 @@ cartItemsEl.addEventListener('click', (e) => {
   }
 });
 
-// Add to cart
 document.querySelectorAll('.product-card').forEach((card) => {
   const btn   = card.querySelector('.add-btn');
   const name  = card.dataset.name;
@@ -332,7 +304,6 @@ document.querySelectorAll('.product-card').forEach((card) => {
     }
     renderCart();
 
-    // Flash feedback
     btn.classList.add('added');
     btn.textContent = '✓ Added';
     setTimeout(() => {
@@ -340,17 +311,14 @@ document.querySelectorAll('.product-card').forEach((card) => {
       btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 5v14M5 12h14"/></svg> Add to Order`;
     }, 1200);
 
-    // Bounce cart icon
     gsap.fromTo(cartToggle, { scale: 1 }, { scale: 1.3, duration: 0.15, yoyo: true, repeat: 1, ease: 'power2.out' });
 
-    // Auto-open cart if it's the first item
     if (cart.length === 1 && cart[0].qty === 1) {
       setTimeout(() => openCart(), 400);
     }
   });
 });
 
-// WhatsApp order
 cartWhatsApp.addEventListener('click', () => {
   if (cart.length === 0) return;
   const lines = cart.map(i => `• ${i.qty}x ${i.name} (${(i.price * i.qty).toFixed(3)} KD)`).join('\n');

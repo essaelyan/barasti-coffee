@@ -2,3 +2,8 @@ node_modules/
 .DS_Store
 Thumbs.db
 *.log
+
+# IMPORTANT: frames/ must always be committed — the scroll animation depends on them.
+# Never add frames/ to this file.
+!frames/
+!frames/**
